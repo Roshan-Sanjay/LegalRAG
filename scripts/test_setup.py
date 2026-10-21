@@ -1,0 +1,1 @@
+print("LegalRAG setup successful")
