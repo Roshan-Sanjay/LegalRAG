@@ -3,10 +3,8 @@ from collections import defaultdict
 from src.retrieval.dense_retriever import DenseRetriever
 from src.retrieval.sparse_retriever import SparseRetriever
 from src.retrieval.cross_encoder_reranker import CrossEncoderReranker
+from src.config.settings import DENSE_WEIGHT, SPARSE_WEIGHT
 
-
-DENSE_WEIGHT = 0.65
-SPARSE_WEIGHT = 0.35
 
 RERANK_CANDIDATES = 20
 
@@ -17,9 +15,16 @@ class HybridRetriever:
 
         self.dense = DenseRetriever()
         self.sparse = SparseRetriever()
-        self.reranker = CrossEncoderReranker()
+        try:
+            self.reranker = CrossEncoderReranker()
+        except Exception as exc:
+            print(f"Cross-encoder unavailable; hybrid ranking will be used: {exc}")
+            self.reranker = None
 
     def search(self, query, top_k=5):
+
+        if not isinstance(query, str) or not query.strip() or top_k <= 0:
+            return []
 
         # ---------------------------------
         # Dense Retrieval
@@ -47,10 +52,7 @@ class HybridRetriever:
 
         for result in dense_results:
 
-            key = (
-                result["source"],
-                result["chunk_text"]
-            )
+            key = (result.get("source", ""), result.get("chunk_text", ""))
 
             combined[key]["dense"] = (
                 result["score"]
@@ -64,10 +66,7 @@ class HybridRetriever:
 
         for result in sparse_results:
 
-            key = (
-                result["source"],
-                result["chunk_text"]
-            )
+            key = (result.get("source", ""), result.get("chunk_text", ""))
 
             combined[key]["sparse"] = (
                 result["score"]
@@ -125,11 +124,7 @@ class HybridRetriever:
 
         for item in final_results:
 
-            case_title = (
-                item["case_title"]
-                .strip()
-                .lower()
-            )
+            case_title = (item.get("case_title") or item.get("source") or item.get("chunk_text", "")).strip().lower()
 
             if case_title in seen_cases:
                 continue
@@ -154,12 +149,15 @@ class HybridRetriever:
         # Neural Reranking
         # ---------------------------------
 
-        reranked_results = (
-            self.reranker.rerank(
-                query=query,
-                candidates=candidate_pool
-            )
-        )
+        if not candidate_pool:
+            return []
+        try:
+            if self.reranker is None:
+                raise RuntimeError("Cross-encoder did not initialize")
+            reranked_results = self.reranker.rerank(query=query, candidates=candidate_pool)
+        except Exception as exc:
+            print(f"Cross-encoder reranking failed; using hybrid ordering: {exc}")
+            reranked_results = candidate_pool
 
         # ---------------------------------
         # Final Top-K

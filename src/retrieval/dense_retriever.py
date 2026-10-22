@@ -1,5 +1,6 @@
 import joblib
 import torch
+from src.config.settings import DENSE_INDEX_PATH, EMBEDDING_MODEL
 
 from transformers import (
     AutoTokenizer,
@@ -7,23 +8,26 @@ from transformers import (
 )
 
 
-MODEL_NAME = (
-    "nlpaueb/legal-bert-base-uncased"
-)
+MODEL_NAME = EMBEDDING_MODEL
 
 
 class DenseRetriever:
 
-    def __init__(self):
+    def __init__(self, index_path=DENSE_INDEX_PATH):
 
         print("Loading vector DB...")
 
-        db = joblib.load(
-            "vector_db/nearest_neighbors.joblib"
-        )
+        try:
+            db = joblib.load(index_path)
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(f"Dense retrieval index missing: {index_path}. Run `python -m src.setup_indexes` after supplying LegalBERT embeddings.") from exc
+        if not isinstance(db, dict) or not {"index", "metadata"}.issubset(db):
+            raise ValueError("Invalid dense retrieval index: expected index and metadata.")
 
         self.index = db["index"]
         self.metadata = db["metadata"]
+        if len(self.metadata) == 0:
+            raise ValueError("Dense retrieval index contains no metadata records.")
 
         print("Loading LegalBERT...")
 
@@ -71,6 +75,9 @@ class DenseRetriever:
 
     def search(self, query, top_k=5):
 
+        if not isinstance(query, str) or not query.strip() or top_k <= 0:
+            return []
+
         query_vector = (
             self.embed_query(query)
         )
@@ -78,7 +85,7 @@ class DenseRetriever:
         distances, indices = (
             self.index.kneighbors(
                 query_vector,
-                n_neighbors=top_k
+                n_neighbors=min(top_k, len(self.metadata))
             )
         )
 
@@ -89,13 +96,8 @@ class DenseRetriever:
             indices[0]
         ):
 
-            row = self.metadata.iloc[idx]
+            row = self.metadata.iloc[idx] if hasattr(self.metadata, "iloc") else self.metadata[idx]
 
-            results.append({
-                "score": 1 - float(score),
-                "case_title": row["case_title"],
-                "source": row["source"],
-                "chunk_text": row["chunk_text"]
-            })
+            results.append({**dict(row), "score": 1 - float(score)})
 
         return results

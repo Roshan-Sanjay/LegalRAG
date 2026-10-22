@@ -1,11 +1,10 @@
 import numpy as np
 
 from sentence_transformers import CrossEncoder
+from src.config.settings import CROSS_ENCODER_MODEL
 
 
-MODEL_NAME = (
-    "cross-encoder/ms-marco-MiniLM-L-6-v2"
-)
+MODEL_NAME = CROSS_ENCODER_MODEL
 
 
 class CrossEncoderReranker:
@@ -21,6 +20,8 @@ class CrossEncoderReranker:
         )
 
     def rerank(self, query, candidates):
+        if not candidates:
+            return []
         pairs = [(
             query,
             item["chunk_text"]
@@ -32,6 +33,8 @@ class CrossEncoderReranker:
         
         scores = np.array(scores)
         
+        if not np.isfinite(scores).all():
+            raise ValueError("Cross-encoder returned non-finite scores.")
         min_score = scores.min()
         max_score = scores.max()
         

@@ -1,8 +1,30 @@
+# Python virtual environments
+.venv/
 venv/
+rootenv/
+
+# Python cache files
 __pycache__/
+*.py[cod]
 *.pyc
+
+# Jupyter
 .ipynb_checkpoints/
+
+# Environment variables and secrets
 .env
+.env.*
+!.env.example
+
+# Generated indexes and raw datasets
 vector_db/
 data/raw/
 
+# Testing
+.pytest_cache/
+
+# Python package metadata
+*.egg-info/
+
+# macOS
+.DS_Store

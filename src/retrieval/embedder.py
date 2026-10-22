@@ -5,9 +5,11 @@ import torch
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModel
 import joblib
+import os
+from src.config.settings import EMBEDDING_MODEL, CHUNKS_PATH, EMBEDDINGS_PATH
 
 
-MODEL_NAME = "nlpaueb/legal-bert-base-uncased"
+MODEL_NAME = EMBEDDING_MODEL
 
 DEVICE = (
     "cuda"
@@ -79,9 +81,7 @@ def generate_embeddings():
 
     print("\nLoading chunks...")
 
-    df = pd.read_csv(
-        "data/chunks/chunked_judgments.csv"
-    )
+    df = pd.read_csv(CHUNKS_PATH)
 
     print(f"Loaded {len(df)} chunks")
 
@@ -105,18 +105,18 @@ def generate_embeddings():
         "metadata": df
     }
 
+    EMBEDDINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+
     joblib.dump(
         output,
-        "data/embeddings/legalbert_embeddings.joblib"
+        str(EMBEDDINGS_PATH)
     )
 
     print(
         "\nSaved embeddings to:"
-        "\ndata/embeddings/legalbert_embeddings.joblib"
+        f"\n{EMBEDDINGS_PATH}"
     )
 
 
 if __name__ == "__main__":
     generate_embeddings()
-
-    

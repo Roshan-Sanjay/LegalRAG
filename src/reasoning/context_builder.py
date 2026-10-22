@@ -1,4 +1,5 @@
 from typing import List, Dict
+import math
 
 from src.config.settings import (
     MAX_CONTEXT_CHARS
@@ -30,11 +31,7 @@ class ContextBuilder:
         unique_chunks = []
 
         for chunk in retrieved_chunks:
-
-            key = (
-                chunk["case_title"],
-                chunk["chunk_text"]
-            )
+            key = (chunk.get("source", ""), chunk.get("chunk_text", ""))
 
             if key not in seen:
 
@@ -82,12 +79,13 @@ class ContextBuilder:
                 "score"
             )
 
-        return sorted(
-            retrieved_chunks,
-            key=lambda x:
-            x[score_field],
-            reverse=True
-        )
+        def score(chunk):
+            try:
+                value = float(chunk.get(score_field, 0) or 0)
+                return value if math.isfinite(value) else 0.0
+            except (TypeError, ValueError):
+                return 0.0
+        return sorted(retrieved_chunks, key=score, reverse=True)
 
     # -----------------------------
     # Build Context
@@ -119,6 +117,11 @@ class ContextBuilder:
             start=1
         ):
 
+            title = chunk.get("case_title") or "Case title unavailable"
+            source = chunk.get("source") or "Source unavailable"
+            text = chunk.get("chunk_text")
+            if not isinstance(text, str) or not text.strip():
+                continue
             score = chunk.get(
                 "final_score",
                 chunk.get(
@@ -133,20 +136,24 @@ class ContextBuilder:
                 )
             )
 
+            try:
+                score = float(score)
+            except (TypeError, ValueError):
+                score = 0.0
             case_block = f"""
 [CASE {i}]
 
 Case Title:
-{chunk['case_title']}
+{title}
 
 Score:
 {score:.4f}
 
 Source:
-{chunk['source']}
+{source}
 
 Relevant Text:
-{chunk['chunk_text']}
+{text.strip()}
 
 """
 

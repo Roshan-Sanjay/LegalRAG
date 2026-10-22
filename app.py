@@ -1,184 +1,49 @@
-import requests 
+"""Gradio frontend; all retrieval and generation remain in the FastAPI backend."""
+import requests
 import gradio as gr
-
-
+from src.config.settings import BACKEND_URL, GRADIO_HOST, GRADIO_PORT, MAX_QUERY_CHARS
 
 def ask_question(query):
-  try:
-    response = requests.post(
-        "http://127.0.0.1:8000/ask",
-        json={
-            "query": query
-        },
-        timeout=300
-    )
+    if not isinstance(query, str) or not query.strip():
+        return "Enter a legal question to continue.", "—", []
+    if len(query.strip()) > MAX_QUERY_CHARS:
+        return f"Question is too long (maximum {MAX_QUERY_CHARS} characters).", "—", []
+    try:
+        response = requests.post(f"{BACKEND_URL}/ask", json={"query": query.strip()}, timeout=(5, 320))
+        response.raise_for_status()
+        result = response.json()
+        if not isinstance(result, dict) or not isinstance(result.get("answer"), str):
+            raise ValueError("Backend returned an unexpected response.")
+        score = result.get("confidence")
+        confidence = f"{score}% (estimated retrieval relevance)" if isinstance(score, (int, float)) else "Unavailable"
+        rows = []
+        for citation in result.get("citations") or []:
+            if not isinstance(citation, dict):
+                continue
+            rows.append([citation.get("rank", ""), citation.get("case_title", "Case title unavailable"), citation.get("citation", ""), citation.get("court", ""), citation.get("year", ""), citation.get("score", ""), citation.get("source", "")])
+        return result["answer"], confidence, rows
+    except requests.exceptions.Timeout:
+        return "The backend request timed out. Check that the API and Ollama are running.", "Unavailable", []
+    except requests.exceptions.ConnectionError:
+        return f"Cannot reach the LegalRAG API at {BACKEND_URL}. Start the backend and try again.", "Unavailable", []
+    except requests.exceptions.HTTPError as exc:
+        try:
+            detail = exc.response.json().get("detail", "")
+        except (ValueError, AttributeError):
+            detail = ""
+        return f"Backend error ({exc.response.status_code}): {detail or 'request failed'}", "Unavailable", []
+    except (requests.RequestException, ValueError) as exc:
+        return f"Could not read the backend response: {exc}", "Unavailable", []
 
-    result = response.json()
+with gr.Blocks(theme=gr.themes.Soft(), title="Legal AI Assistant") as demo:
+    gr.Markdown("# ⚖️ Legal AI Assistant\n### Indian Case Law Research & Reasoning System\nAsk a legal question and review the retrieved authorities supporting the answer.")
+    query = gr.Textbox(label="Legal Question", placeholder="e.g. Can an employer terminate an employee without notice?", lines=4, max_lines=8)
+    submit = gr.Button("Analyze Legal Question", variant="primary")
+    answer = gr.Textbox(label="Legal Analysis", lines=18)
+    confidence = gr.Textbox(label="Estimated confidence", interactive=False)
+    gr.Markdown("The score summarizes retrieval relevance. It is not a calibrated probability that the legal answer is correct.")
+    citations = gr.Dataframe(headers=["Rank", "Case Title", "Citation", "Court", "Year", "Relevance Score", "Source"], label="Supporting Authorities", interactive=False)
+    submit.click(fn=ask_question, inputs=query, outputs=[answer, confidence, citations])
 
-    answer = result["answer"]
-
-    confidence = (
-        f"{result['confidence']}%"
-    )
-
-    rows = []
-
-    for c in result["citations"]:
-
-        rows.append([
-            c["rank"],
-            c["case_title"],
-            c["score"],
-            c["source"]
-        ])
-
-    return (
-        answer,
-        confidence,
-        rows
-    )
- 
-  except Exception as e:
-    return (
-        f"API Error: {e}",
-        "0%",
-        []
-    )
-
-
-with gr.Blocks(
-    theme=gr.themes.Soft(),
-    title="Legal AI Assistant"
-) as demo:
-
-    gr.Markdown(
-        """
-# ⚖️ Legal AI Assistant
-
-### Indian Case Law Research & Reasoning System
-
-Ask legal questions and receive answers grounded in retrieved case law.
-"""
-    )
-
-    with gr.Row():
-
-        with gr.Column(scale=3):
-
-            query = gr.Textbox(
-                label="Legal Question",
-                placeholder="e.g. Can an employer terminate an employee without notice?",
-                lines=4
-            )
-
-            gr.Examples(
-                examples=[
-                    ["Can an employer terminate an employee without notice?"],
-                    ["What constitutes unfair dismissal?"],
-                    ["Can a contract be terminated unilaterally?"],
-                    ["What are employee rights after termination?"]
-                ],
-                inputs=query
-            )
-
-            submit = gr.Button(
-                "Analyze Legal Question",
-                variant="primary"
-            )
-
-        with gr.Column(scale=1):
-
-            gr.Markdown(
-                """
-### System Information
-
-**Corpus Statistics**
-
-- Cases Indexed: 117
-- Chunks Indexed: 4721
-
-**Models**
-
-- Embeddings: LegalBERT
-- LLM: Llama3:8b
-- Retrieval: Hybrid Search
-
-**Backend**
-
-- FastAPI
-
-"""
-            )
-
-    
-    with gr.Column():
-
-        answer = gr.Textbox(
-            label="⚖️ Legal Analysis",
-            lines=20,
-            scale=4
-        )
-
-        confidence = gr.Textbox(
-            label="Answer Confidence",
-            interactive=False,
-            scale=1
-        )
-        gr.Markdown(
-            """
-            Confidence is estimated from the relevance 
-            scores of the retrieved legal authorities.
-            """
-        )   
-        
-
-    citations = gr.Dataframe(
-        headers=[
-            "Rank",
-            "Case Title",
-            "Relevance Score",
-            "Source"
-        ],
-        label="Supporting Authorities"
-    )
-
-    with gr.Accordion(
-        "How the System Works",
-        open=False
-    ):
-
-        gr.Markdown(
-            """
-1. User submits a legal question.
-
-2. Hybrid retrieval searches the legal corpus.
-
-3. LegalBERT identifies semantically relevant judgments.
-
-4. Relevant legal context is assembled.
-
-5. Phi-3 generates legal reasoning.
-
-6. Supporting authorities are displayed.
-"""
-        )
-
-    submit.click(
-        fn=ask_question,
-        inputs=query,
-        outputs=[
-            answer,
-            confidence,
-            citations
-        ]
-    )
-
-    gr.Markdown(
-        """
----
-**Powered by:** LegalBERT • ChromaDB • Ollama (Llama3:8b) • FastAPI • Gradio
-"""
-    )
-
-demo.launch(inbrowser=True)
-
+if __name__ == "__main__":
+    demo.launch(server_name=GRADIO_HOST, server_port=GRADIO_PORT)
