@@ -80,3 +80,92 @@ def test_ollama_connection_failure_is_clear(monkeypatch):
     monkeypatch.setattr("src.llm.inference.requests.post", fail)
     with pytest.raises(RuntimeError, match="Could not connect to Ollama"):
         OllamaLLM().generate("prompt")
+def test_pipeline_logs_valid_output_validation(caplog):
+    from src.reasoning.output_validator import OutputValidator
+
+    valid_answer = """LEGAL ISSUE:
+Whether notice is required.
+
+RELEVANT AUTHORITIES:
+Relevant case law.
+
+LEGAL REASONING:
+The reasoning follows the supplied context.
+
+CONCLUSION:
+The answer depends on the applicable law.
+
+LIMITATIONS:
+This response is limited to the retrieved context.
+"""
+
+    class Retriever:
+        def search(self, query, top_k):
+            return [
+                {
+                    "case_title": "Test Case",
+                    "source": "test",
+                    "chunk_text": "Test legal context.",
+                    "final_score": 0.8,
+                }
+            ]
+
+    class LLM:
+        def generate(self, prompt):
+            return valid_answer
+
+    with caplog.at_level("INFO"):
+        result = LegalRAGPipeline(
+            retriever=Retriever(),
+            llm=LLM(),
+        ).answer_query("Is notice required?")
+
+    assert OutputValidator.validate(result["answer"])["status"] == "valid"
+    assert "LLM output passed structural validation" in caplog.text
+
+
+def test_pipeline_logs_invalid_output_without_replacing_answer(caplog):
+    invalid_answer = "This response does not contain the required sections."
+
+    class Retriever:
+        def search(self, query, top_k):
+            return [
+                {
+                    "case_title": "Test Case",
+                    "source": "test",
+                    "chunk_text": "Test legal context.",
+                    "final_score": 0.8,
+                }
+            ]
+
+    class LLM:
+        def generate(self, prompt):
+            return invalid_answer
+
+    with caplog.at_level("WARNING"):
+        result = LegalRAGPipeline(
+            retriever=Retriever(),
+            llm=LLM(),
+        ).answer_query("Is notice required?")
+
+    assert result["answer"] == invalid_answer
+    assert "LLM output failed structural validation" in caplog.text
+
+
+def test_empty_retrieval_does_not_call_llm():
+    class Retriever:
+        def search(self, query, top_k):
+            return []
+
+    class LLM:
+        def generate(self, prompt):
+            raise AssertionError("LLM should not be called for empty retrieval")
+
+    result = LegalRAGPipeline(
+        retriever=Retriever(),
+        llm=LLM(),
+    ).answer_query("Is notice required?")
+
+    assert result["answer"] == "Insufficient legal context available."
+    assert result["confidence"] == 0.0
+    assert result["citations"] == []

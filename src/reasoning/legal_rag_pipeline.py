@@ -3,6 +3,7 @@ from src.retrieval.hybrid_retriever import HybridRetriever
 from src.reasoning.context_builder import ContextBuilder
 from src.reasoning.prompt_builder import PromptBuilder
 from src.reasoning.citation_generator import CitationGenerator
+from src.reasoning.output_validator import OutputValidator
 from src.llm.inference import OllamaLLM
 from src.utils.logger import logger
 
@@ -30,6 +31,19 @@ class LegalRAGPipeline:
         context = self.context_builder.build_context(retrieved)
         if not context:
             return {"query": query, "answer": "Insufficient legal context available.", "sources": [], "num_sources": 0, "context": "", "citations": [], "confidence": 0.0, "confidence_type": "estimated retrieval relevance (not a probability)"}
-        prompt = PromptBuilder.build_legal_prompt(query=query, context=context)
+        prompt = PromptBuilder.build_legal_prompt(
+            query=query,
+            context=context
+        )
         answer = self.llm.generate(prompt)
+        validation_result = OutputValidator.validate(answer)
+        if validation_result["status"] == "valid":
+            logger.info("LLM output passed structural validation")
+        elif validation_result["status"] == "insufficient_evidence":
+            logger.info("LLM returned the insufficient-evidence response")
+        else:
+            logger.warning(
+                "LLM output failed structural validation: %s",
+                validation_result
+            )
         return {"query": query, "answer": answer, "sources": retrieved, "num_sources": len(retrieved), "context": context, "citations": citations, "confidence": confidence, "confidence_type": "estimated retrieval relevance (not a probability)"}
