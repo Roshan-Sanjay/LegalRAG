@@ -2,6 +2,7 @@
 .venv/
 venv/
 rootenv/
+.venv-clean/
 
 # Python cache files
 __pycache__/
