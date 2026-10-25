@@ -124,7 +124,7 @@ This response is limited to the retrieved context.
     assert "LLM output passed structural validation" in caplog.text
 
 
-def test_pipeline_logs_invalid_output_without_replacing_answer(caplog):
+def test_pipeline_logs_invalid_output_returns_fallback_after_retries(caplog):
     invalid_answer = "This response does not contain the required sections."
 
     class Retriever:
@@ -139,19 +139,38 @@ def test_pipeline_logs_invalid_output_without_replacing_answer(caplog):
             ]
 
     class LLM:
+        def __init__(self):
+            self.calls = 0
+            self.prompts = []
+
         def generate(self, prompt):
+            self.calls += 1
+            self.prompts.append(prompt)
             return invalid_answer
+
+    llm = LLM()
 
     with caplog.at_level("WARNING"):
         result = LegalRAGPipeline(
             retriever=Retriever(),
-            llm=LLM(),
+            llm=llm,
         ).answer_query("Is notice required?")
 
-    assert result["answer"] == invalid_answer
-    assert "LLM output failed structural validation" in caplog.text
+    assert llm.calls == 3
+    assert result["answer"] == (
+        "Unable to generate a structurally valid legal response. Please try again."
+    )
+    assert result["query"] == "Is notice required?"
+    assert result["num_sources"] == 1
+    assert len(result["citations"]) == 1
+    assert result["confidence"] > 0
 
+    assert "failed structural validation" in caplog.text
+    assert "returning controlled fallback" in caplog.text
 
+    # Confirm the retry prompts contain structural correction instructions.
+    assert "Missing sections:" in llm.prompts[1]
+    assert "Missing sections:" in llm.prompts[2]
 def test_empty_retrieval_does_not_call_llm():
     class Retriever:
         def search(self, query, top_k):

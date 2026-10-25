@@ -11,6 +11,7 @@ except ImportError:  # .env loading is optional; real environment variables stil
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 def _path(name: str, default: str) -> Path:
+
     value = Path(os.getenv(name, default)).expanduser()
     return value if value.is_absolute() else ROOT_DIR / value
 
@@ -39,3 +40,8 @@ MAX_GENERATION_TOKENS = int(os.getenv("OLLAMA_MAX_TOKENS", "1024"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 ENABLE_RERANKING = os.getenv("ENABLE_RERANKING", "true").lower() in {"1", "true", "yes"}
 ENABLE_QUERY_EXPANSION = False
+# LLM output validation and recovery
+MAX_OUTPUT_RETRIES = int(os.getenv("MAX_OUTPUT_RETRIES", "2"))
+INVALID_OUTPUT_FALLBACK = (
+    "Unable to generate a structurally valid legal response. Please try again."
+)
