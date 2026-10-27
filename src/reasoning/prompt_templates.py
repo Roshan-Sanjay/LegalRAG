@@ -1,12 +1,14 @@
+from langchain_core.prompts import ChatPromptTemplate
+
+
 class PromptTemplates:
+    """Reusable prompt templates for LegalRAG."""
 
-    @staticmethod
-    def legal_reasoning_prompt(
-        query: str,
-        context: str
-    ) -> str:
-
-        return f"""
+    LEGAL_REASONING_TEMPLATE = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """
 You are an Indian Legal AI Assistant specializing in legal research
 and case-law analysis.
 
@@ -23,7 +25,11 @@ Insufficient legal context available.
 Do not use this fallback merely because a minor detail is missing.
 If a useful but qualified answer is possible, explain the supported
 conclusions and identify the remaining limitations.
-
+""",
+            ),
+            (
+                "human",
+                """
 ==================================================
 LEGAL CONTEXT
 ==================================================
@@ -39,7 +45,11 @@ LEGAL QUESTION
 ==================================================
 
 {query}
-
+""",
+            ),
+            (
+                "system",
+                """
 ==================================================
 REASONING INSTRUCTIONS
 ==================================================
@@ -111,4 +121,15 @@ FINAL CONSTRAINTS
 - Keep the response concise, professional, and evidence-grounded.
 - If the insufficient evidence rule applies, return only its exact fallback
   response instead of the structured sections.
-"""
+""",
+            ),
+        ]
+    )
+
+    @staticmethod
+    def legal_reasoning_prompt(query: str, context: str) -> str:
+        """Format the legal chat template as a string for the Ollama client."""
+        return PromptTemplates.LEGAL_REASONING_TEMPLATE.format_prompt(
+            context=context,
+            query=query,
+        ).to_string()

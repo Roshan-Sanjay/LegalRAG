@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
+from src.config.settings import INVALID_OUTPUT_FALLBACK, MAX_OUTPUT_RETRIES
 from src.retrieval.vector_store import build_vector_store
 from src.retrieval.tfidf_builder import build_tfidf
 from src.retrieval.sparse_retriever import SparseRetriever
@@ -74,10 +75,13 @@ def test_frontend_backend_errors_are_user_facing(monkeypatch):
     assert "503" in answer and "index missing" in answer and citations == []
 
 def test_ollama_connection_failure_is_clear(monkeypatch):
-    import requests
+    import httpx
     from src.llm.inference import OllamaLLM
-    def fail(*args, **kwargs): raise requests.ConnectionError("offline")
-    monkeypatch.setattr("src.llm.inference.requests.post", fail)
+
+    def fail(*args, **kwargs):
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr("src.llm.inference.ChatOllama.invoke", fail)
     with pytest.raises(RuntimeError, match="Could not connect to Ollama"):
         OllamaLLM().generate("prompt")
 def test_pipeline_logs_valid_output_validation(caplog):
@@ -188,3 +192,104 @@ def test_empty_retrieval_does_not_call_llm():
     assert result["answer"] == "Insufficient legal context available."
     assert result["confidence"] == 0.0
     assert result["citations"] == []
+
+
+VALID_PIPELINE_ANSWER = """LEGAL ISSUE:
+Whether notice is required.
+
+RELEVANT AUTHORITIES:
+Relevant case law.
+
+LEGAL REASONING:
+The reasoning follows the supplied context.
+
+CONCLUSION:
+The answer depends on the applicable law.
+
+LIMITATIONS:
+This response is limited to the retrieved context.
+"""
+
+
+def _pipeline_with_context(llm, context):
+    class Retriever:
+        def search(self, query, top_k):
+            return [{
+                "case_title": "Test Case",
+                "source": "test",
+                "chunk_text": context,
+                "final_score": 0.8,
+            }]
+
+    pipeline = LegalRAGPipeline(retriever=Retriever(), llm=llm)
+    pipeline.context_builder.build_context = lambda records: context
+    return pipeline
+
+
+def test_pipeline_prefers_generate_with_context_on_initial_attempt():
+    class LLM:
+        def __init__(self):
+            self.context_calls = []
+
+        def generate_with_context(self, query, context):
+            self.context_calls.append((query, context))
+            return VALID_PIPELINE_ANSWER
+
+        def generate(self, prompt):
+            raise AssertionError("generate should not be used for valid output")
+
+    llm = LLM()
+    result = _pipeline_with_context(llm, "Retrieved legal context.").answer_query(
+        "  Is notice required?  "
+    )
+
+    assert result["answer"] == VALID_PIPELINE_ANSWER
+    assert llm.context_calls == [("Is notice required?", "Retrieved legal context.")]
+
+
+def test_pipeline_keeps_support_for_llms_with_only_generate():
+    class LLM:
+        def __init__(self):
+            self.prompts = []
+
+        def generate(self, prompt):
+            self.prompts.append(prompt)
+            return VALID_PIPELINE_ANSWER
+
+    llm = LLM()
+    result = _pipeline_with_context(llm, "Retrieved legal context.").answer_query(
+        "Is notice required?"
+    )
+
+    assert result["answer"] == VALID_PIPELINE_ANSWER
+    assert len(llm.prompts) == 1
+    assert "Is notice required?" in llm.prompts[0]
+    assert "Retrieved legal context." in llm.prompts[0]
+
+
+def test_pipeline_uses_string_generate_for_all_lcel_recovery_attempts():
+    class LLM:
+        def __init__(self):
+            self.context_calls = []
+            self.recovery_prompts = []
+
+        def generate_with_context(self, query, context):
+            self.context_calls.append((query, context))
+            return "Structurally invalid first response"
+
+        def generate(self, prompt):
+            self.recovery_prompts.append(prompt)
+            return "Still structurally invalid"
+
+    context = "Retrieved legal context for the original question."
+    llm = LLM()
+    result = _pipeline_with_context(llm, context).answer_query(
+        "Is notice required?"
+    )
+
+    assert llm.context_calls == [("Is notice required?", context)]
+    assert len(llm.recovery_prompts) == MAX_OUTPUT_RETRIES
+    assert all("Is notice required?" in prompt for prompt in llm.recovery_prompts)
+    assert all(context in prompt for prompt in llm.recovery_prompts)
+    assert all("IMPORTANT:" in prompt for prompt in llm.recovery_prompts)
+    assert result["answer"] == INVALID_OUTPUT_FALLBACK

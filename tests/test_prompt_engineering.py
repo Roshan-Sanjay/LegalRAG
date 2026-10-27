@@ -89,3 +89,14 @@ def test_prompt_builder_uses_existing_template():
     assert "LEGAL REASONING:" in normalized_prompt
     assert "CONCLUSION:" in normalized_prompt
     assert "LIMITATIONS:" in normalized_prompt
+
+
+def test_prompt_builder_returns_string_and_preserves_context_braces():
+    query = "What does the judgment say about section 12?"
+    context = "The judgment refers to {a statutory provision}."
+
+    prompt = PromptBuilder.build_legal_prompt(query=query, context=context)
+
+    assert isinstance(prompt, str)
+    assert query in prompt
+    assert context in prompt

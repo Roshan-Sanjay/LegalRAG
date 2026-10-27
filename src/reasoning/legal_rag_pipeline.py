@@ -98,7 +98,21 @@ class LegalRAGPipeline:
         answer = INVALID_OUTPUT_FALLBACK
 
         for attempt in range(1, max_attempts + 1):
-            answer = self.llm.generate(prompt)
+            if attempt == 1:
+                generate_with_context = getattr(
+                    self.llm,
+                    "generate_with_context",
+                    None,
+                )
+                if callable(generate_with_context):
+                    answer = generate_with_context(
+                        query=query,
+                        context=context,
+                    )
+                else:
+                    answer = self.llm.generate(prompt)
+            else:
+                answer = self.llm.generate(prompt)
             validation_result = OutputValidator.validate(answer)
 
             status = validation_result["status"]

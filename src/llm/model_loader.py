@@ -1,6 +1,10 @@
 import logging
 
-from src.config.settings import OLLAMA_MODEL
+from src.config.settings import (
+    MAX_GENERATION_TOKENS,
+    OLLAMA_MODEL,
+    TEMPERATURE as CONFIGURED_TEMPERATURE,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -10,9 +14,6 @@ class OllamaConfig:
 
     MODEL_NAME = OLLAMA_MODEL
 
-    TEMPERATURE = 0.1
+    TEMPERATURE = CONFIGURED_TEMPERATURE
 
-    MAX_TOKENS = 1024
-
-
-
+    MAX_TOKENS = MAX_GENERATION_TOKENS

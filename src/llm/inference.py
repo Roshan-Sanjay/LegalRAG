@@ -1,68 +1,78 @@
-import requests
+import httpx
+from langchain_ollama import ChatOllama
+from langchain_core.output_parsers import StrOutputParser
+from ollama import ResponseError
 
+from src.config.settings import OLLAMA_BASE_URL, OLLAMA_TIMEOUT
 from src.llm.model_loader import OllamaConfig
+from src.reasoning.prompt_templates import PromptTemplates
 from src.utils.logger import logger
-from src.config.settings import OLLAMA_URL, OLLAMA_TIMEOUT
 
 
 class OllamaLLM:
-
     def __init__(self):
-
-        self.model = (
-            OllamaConfig.MODEL_NAME
-        )
-
-        self.url = OLLAMA_URL
+        self.model = OllamaConfig.MODEL_NAME
         self.timeout = OLLAMA_TIMEOUT
-
-    def generate(self, prompt: str):
-        
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": OllamaConfig.TEMPERATURE,
-                "num_predict": OllamaConfig.MAX_TOKENS
-            }
-        }
-
-        logger.info(
-            f"Calling Ollama model: {self.model}"
+        self.client = ChatOllama(
+            model=self.model,
+            base_url=OLLAMA_BASE_URL,
+            temperature=OllamaConfig.TEMPERATURE,
+            num_predict=OllamaConfig.MAX_TOKENS,
+            client_kwargs={"timeout": self.timeout},
+        )
+        self.chain = (
+            PromptTemplates.LEGAL_REASONING_TEMPLATE
+            | self.client
+            | StrOutputParser()
         )
 
-        try:
-            response = requests.post(
-                self.url,
-                json=payload,
-                timeout=self.timeout
+    def generate(self, prompt: str) -> str:
+        logger.info("Calling Ollama model: %s", self.model)
+        return self._generate(
+            lambda: getattr(
+                self.client.invoke(prompt, stream=False),
+                "content",
+                None,
             )
-            
-            response.raise_for_status()
-            try:
-                result = response.json()
-            except ValueError as exc:
-                raise RuntimeError("Ollama returned malformed JSON.") from exc
-            
-            answer = result.get(
-                "response",
-                ""
-            )
+        )
 
-            if not isinstance(answer, str) or not answer.strip():
-                raise RuntimeError("Ollama returned an empty answer; verify the configured model is installed.")
-            logger.info("Answer generated successfully")
-            return answer
-        except requests.exceptions.Timeout as exc:
+    def generate_with_context(self, query: str, context: str) -> str:
+        logger.info("Calling Ollama model: %s", self.model)
+        return self._generate(
+            lambda: self.chain.invoke({"query": query, "context": context})
+        )
+
+    def _generate(self, invoke):
+        try:
+            answer = invoke()
+        except httpx.TimeoutException as exc:
             logger.error("Ollama request timed out")
-            raise RuntimeError(f"Ollama timed out after {self.timeout:g}s. Check that Ollama is running and the model is available.") from exc
-        except requests.exceptions.ConnectionError as exc:
+            raise RuntimeError(
+                f"Ollama timed out after {self.timeout:g}s. "
+                "Check that Ollama is running and the model is available."
+            ) from exc
+        except httpx.ConnectError as exc:
             logger.error("Could not connect to Ollama")
-            raise RuntimeError("Could not connect to Ollama. Start Ollama and check OLLAMA_BASE_URL.") from exc
-        except requests.exceptions.HTTPError as exc:
-            detail = response.text[:500] if response is not None else str(exc)
-            raise RuntimeError(f"Ollama request failed ({response.status_code}): {detail}. Check that {self.model!r} is installed with `ollama list`.") from exc
-        except requests.exceptions.RequestException as exc:
+            raise RuntimeError(
+                "Could not connect to Ollama. Start Ollama and check "
+                "OLLAMA_BASE_URL."
+            ) from exc
+        except ResponseError as exc:
+            logger.error("Ollama returned a model or server error: %s", exc)
+            raise RuntimeError(
+                f"Ollama model/server error (status {exc.status_code}): "
+                f"{exc.error}. Check that {self.model!r} is installed "
+                "with `ollama list`."
+            ) from exc
+        except httpx.RequestError as exc:
             logger.error("Ollama request failed: %s", exc)
             raise RuntimeError(f"Ollama request failed: {exc}") from exc
+
+        if not isinstance(answer, str) or not answer.strip():
+            raise RuntimeError(
+                "Ollama returned an empty or invalid answer; "
+                "verify the configured model is installed."
+            )
+
+        logger.info("Answer generated successfully")
+        return answer

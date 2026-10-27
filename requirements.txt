@@ -13,3 +13,5 @@ transformers>=4.40,<6.0
 sentence-transformers>=3.0,<6.0
 torch>=2.2,<3.0
 python-dotenv>=1.0,<2.0
+langchain-core>=1.2.0,<2.0.0
+langchain-ollama>=1.0.0,<2.0.0
